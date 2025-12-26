@@ -78,6 +78,14 @@ AEState AbstractExecutionMgr::test2()
     NodeID b = getNodeID("b");
     // TODO: put your code in the following braces
     //@{
+    NodeID mallocObj = getNodeID("malloc");
+    (void)mallocObj;
+
+    as[p] = AddressValue(getMemObjAddress("malloc"));
+    as.storeValue(p, IntervalValue(0, 0));
+    as[q] = as.loadValue(p);
+    as.storeValue(p, IntervalValue(3, 3));
+    as[b] = as.loadValue(p).getInterval() + IntervalValue(1, 1);
     //@}
 
     as.printAbstractState();
@@ -301,17 +309,15 @@ AEState AbstractExecutionMgr::test7()
     //@{
     // Simulate the side effects and return value of foo(int z)
     // int foo(int z) { k = z; return k; }
-    NodeID z = getNodeID("z");
     NodeID k = getNodeID("k");
 
+
     // y = foo(2)
-    as[z] = IntervalValue(2, 2);
-    as[k] = as[z];
+    as[k] = IntervalValue(2, 2);
     as[y] = as[k];
 
     // x = foo(3)
-    as[z] = IntervalValue(3, 3);
-    as[k] = as[z];
+    as[k] = IntervalValue(3, 3);
     as[x] = as[k];
     //@}
 
