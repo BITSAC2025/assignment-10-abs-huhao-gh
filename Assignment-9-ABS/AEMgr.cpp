@@ -107,6 +107,17 @@ AEState AbstractExecutionMgr::test3()
     NodeID x = getNodeID("x");
     // TODO: put your code in the following braces
     //@{
+    NodeID malloc1 = getNodeID("malloc1");
+    NodeID malloc2 = getNodeID("malloc2");
+    (void)malloc1;
+    (void)malloc2;
+
+    as[p] = AddressValue(getMemObjAddress("malloc1"));
+    as[q] = AddressValue(getMemObjAddress("malloc2"));
+    as.storeValue(p, as[q]);
+    as.storeValue(q, IntervalValue(10, 10));
+    as[r] = as.loadValue(p);
+    as[x] = as.loadValue(r);
     //@}
 
     as.printAbstractState();
@@ -136,6 +147,23 @@ AEState AbstractExecutionMgr::test4()
     NodeID b = getNodeID("b");
     // TODO: put your code in the following braces
     //@{
+    NodeID mallocObj = getNodeID("malloc");
+    (void)mallocObj;
+
+    as[p] = AddressValue(getMemObjAddress("malloc"));
+
+    // x = &p[0]
+    as[x] = AddressValue(getGepObjAddress("malloc", 0));
+    // y = &p[1]
+    as[y] = AddressValue(getGepObjAddress("malloc", 1));
+
+    // *x = 10; *y = 11
+    as.storeValue(x, IntervalValue(10, 10));
+    as.storeValue(y, IntervalValue(11, 11));
+
+    // a = *x; b = *y
+    as[a] = as.loadValue(x);
+    as[b] = as.loadValue(y);
     //@}
 
     as.printAbstractState();
@@ -174,6 +202,32 @@ AEState AbstractExecutionMgr::test5()
     NodeID z = getNodeID("z");
     // TODO: put your code in the following braces
     //@{
+    NodeID malloc1 = getNodeID("malloc1");
+    NodeID malloc2 = getNodeID("malloc2");
+    (void)malloc1;
+    (void)malloc2;
+
+    // p = malloc1; x = malloc2
+    as[p] = AddressValue(getMemObjAddress("malloc1"));
+    as[x] = AddressValue(getMemObjAddress("malloc2"));
+
+    // *x = 5
+    as.storeValue(x, IntervalValue(5, 5));
+
+    // q = &(p->f0); treat f0 as the 0-th field
+    as[q] = AddressValue(getGepObjAddress("malloc1", 0));
+    // *q = 10
+    as.storeValue(q, IntervalValue(10, 10));
+
+    // r = &(p->f1); treat f1 as the 1-st field
+    as[r] = AddressValue(getGepObjAddress("malloc1", 1));
+    // *r = x
+    as.storeValue(r, as[x]);
+
+    // y = *r
+    as[y] = as.loadValue(r);
+    // z = *q + *y
+    as[z] = as.loadValue(q).getInterval() + as.loadValue(y).getInterval();
     //@}
 
     as.printAbstractState();
@@ -197,6 +251,29 @@ AEState AbstractExecutionMgr::test6()
     NodeID arg = getNodeID("arg");
     // TODO: put your code in the following braces
     //@{
+    // arg is an interval [4, 10]
+    as[arg] = IntervalValue(4, 10);
+
+    // a = arg + 1
+    as[a] = as[arg].getInterval() + IntervalValue(1, 1);
+
+    // b = 5
+    as[b] = IntervalValue(5, 5);
+
+    // if (a > 10) b = a;
+    AEState then_as = as;
+    AEState else_as = as;
+
+    // then branch: a > 10  ==> a in [11, +inf]
+    then_as[a].meet_with(IntervalValue(11, IntervalValue::plus_infinity()));
+    then_as[b] = then_as[a];
+
+    // else branch: !(a > 10) ==> a in [-inf, 10]
+    else_as[a].meet_with(IntervalValue(IntervalValue::minus_infinity(), 10));
+
+    // merge two branches
+    as = then_as;
+    as.joinWith(else_as);
     //@}
 
     as.printAbstractState();
@@ -222,6 +299,20 @@ AEState AbstractExecutionMgr::test7()
     NodeID y = getNodeID("y");
     // TODO: put your code in the following braces
     //@{
+    // Simulate the side effects and return value of foo(int z)
+    // int foo(int z) { k = z; return k; }
+    NodeID z = getNodeID("z");
+    NodeID k = getNodeID("k");
+
+    // y = foo(2)
+    as[z] = IntervalValue(2, 2);
+    as[k] = as[z];
+    as[y] = as[k];
+
+    // x = foo(3)
+    as[z] = IntervalValue(3, 3);
+    as[k] = as[z];
+    as[x] = as[k];
     //@}
 
     as.printAbstractState();
@@ -248,6 +339,58 @@ AEState AbstractExecutionMgr::test8()
     NodeID x = getNodeID("x");
     // TODO: put your code in the following braces
     //@{
+    // compose 'entry_as'
+    entry_as[x] = IntervalValue(20, 20);
+
+    bool increase = true;
+    bool widening = false;
+
+    int iter = 0;
+    while (true)
+    {
+        // handle loop head
+        AEState cur_body_as = body_as;
+        AEState cur_head_as = head_as;
+        head_as = entry_as;
+        head_as.joinWith(body_as);
+
+        // widening and narrowing
+        if (iter >= (int)widen_delay)
+        {
+            if (increase) // widening
+            {
+                head_as = cur_head_as.widening(head_as);
+                if (head_as == cur_head_as)
+                {
+                    increase = false;
+                    widening = true;
+                    continue;
+                }
+            }
+            else // narrowing
+            {
+                head_as = cur_head_as.narrowing(head_as);
+                if (head_as == cur_head_as)
+                    break;
+            }
+        }
+
+        // handle loop body
+        body_as = head_as;
+        // while (x > 0)  ==> x in [1, +inf]
+        body_as[x].meet_with(IntervalValue(1, IntervalValue::plus_infinity()));
+        // x--
+        body_as[x] = body_as[x].getInterval() + IntervalValue(-1, -1);
+
+        if (body_as == cur_body_as && !widening)
+            break;
+
+        iter++;
+    }
+
+    // handle loop exit: x <= 0
+    exit_as = body_as;
+    exit_as[x].meet_with(IntervalValue(IntervalValue::minus_infinity(), 0));
     //@}
 
     exit_as.printAbstractState();
